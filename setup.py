@@ -27,6 +27,10 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=['tests']),
     install_requires=[
         "torch>=1.6.0",
+        "numpy>=1.18.5",
+        "transformers>=4.0.0",
+        "datasets>=1.1.3",
+        "tqdm>=4.41.1",
     ],
     python_requires='>=3.8',
     classifiers=[

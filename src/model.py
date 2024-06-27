@@ -41,7 +41,7 @@ def gelu(x):
     """Gaussian Error Linear Unit."""
     return 0.5 * x * (1 + tf.tanh(tf.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3))))
 
-class NanoGemmaConfig:
+class MinGemmaConfig:
     def __init__(self, vocab_size=50257, n_layer=12, n_head=12, n_embd=768, max_seq_len=1024):
         self.vocab_size = vocab_size
         self.n_layer = n_layer
@@ -113,7 +113,7 @@ class TransformerBlock(tf.keras.layers.Layer):
         x = x + self.ff(self.ln2(x))
         return x
 
-class NanoGemma(tf.keras.Model):
+class MinGemma(tf.keras.Model):
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -146,10 +146,10 @@ class NanoGemma(tf.keras.Model):
         return logits
 
 # Example usage
-config = NanoGemmaConfig()
-model = NanoGemma(config)
+config = MinGemmaConfig()
+model = MinGemmaGemma(config)
 
 # Dummy input
 dummy_input = tf.random.uniform((1, 50), minval=0, maxval=config.vocab_size, dtype=tf.int32)
 output = model(dummy_input)
-print(output.shape)  # Should print (1, 50, 50257) for the default config
+print(output.shape)  # (1, 50, 50257)

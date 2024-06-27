@@ -1,9 +1,13 @@
-## reference: https://huggingface.co/datasets/Salesforce/wikitext-103
-
+## reference: https://huggingface.co/datasets/Salesforce/wikitext
 import os
 import numpy as np
-import tqdm # progress bar -- helps with debugging
+import tqdm 
 
-# TODO: decide what other things we can use for the dataset
+from datasets import load_dataset
+
 
 num_proc = 8 # number of processes to use
+num_proc_load_dataset = num_proc
+
+ds = load_dataset("Salesforce/wikitext", "wikitext-103-v1")
+
