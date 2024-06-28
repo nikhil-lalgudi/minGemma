@@ -2,8 +2,9 @@ import os
 import numpy as np
 import tqdm # progress bar -- helps with debugging
 from datasets import load_dataset
+import multiprocessing
 
-num_proc = 8 # number of processes to use
+num_proc = multiprocessing.cpu_count() // 2
 data_dir = 'data/coqa' # directory ?
 
 # tokenize the dataset
