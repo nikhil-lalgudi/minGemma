@@ -1,7 +1,13 @@
+### References: 
+## 1) https://github.com/google-deepmind/gemma --> Official Gemma Implementation
+## 2) https://github.com/google/gemma_pytorch/tree/main/gemma --> Gemma's Pytorch implementation
+
 import torch
 import numpy as np
 import torch.nn as nn
 import math
+
+
 
 """
 To-do:
