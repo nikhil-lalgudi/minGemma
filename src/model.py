@@ -27,17 +27,39 @@ And a lot more stuff
 """
 
 
-config = {
- """
-
-Add the configurations of: 
-Gemma-2b
-Gemma2-b instruct 
-Gemma-7b
-Gemma-7b instruct
-"""
- 
-}
+def get_config(model_name):
+    # Example configuration, expand as needed for different models
+    configs = {
+        "Gemma-2b": {
+            "vocab_size": 50304,
+            "n_layer": 24,
+            "n_head": 16,
+            "n_embd": 2048,
+            "max_seq_len": 1024
+        },
+        "Gemma-2b-instruct": {
+            "vocab_size": 50304,
+            "n_layer": 24,
+            "n_head": 16,
+            "n_embd": 2048,
+            "max_seq_len": 1024
+        },
+        "Gemma-7b": {
+            "vocab_size": 50304,
+            "n_layer": 32,
+            "n_head": 32,
+            "n_embd": 4096,
+            "max_seq_len": 1024
+        },
+        "Gemma-7b-instruct": {
+            "vocab_size": 50304,
+            "n_layer": 32,
+            "n_head": 32,
+            "n_embd": 4096,
+            "max_seq_len": 1024
+        }
+    }
+    return configs.get(model_name, configs["Gemma-2b"])
 
 
 
@@ -48,7 +70,7 @@ def gelu(x):
     return 0.5 * x * (1 + tf.tanh(tf.sqrt(2 / np.pi) * (x + 0.044715 * tf.pow(x, 3))))
 
 class MinGemmaConfig:
-    def __init__(self, vocab_size=50257, n_layer=12, n_head=12, n_embd=768, max_seq_len=1024):
+    def __init__(self, vocab_size=50304, n_layer=12, n_head=12, n_embd=768, max_seq_len=1024):
         self.vocab_size = vocab_size
         self.n_layer = n_layer
         self.n_head = n_head
@@ -152,8 +174,9 @@ class MinGemma(tf.keras.Model):
         return logits
 
 # Example usage
-config = MinGemmaConfig()
-model = MinGemmaGemma(config)
+config_dict = get_config("Gemma-2b")
+config = MinGemmaConfig(**config_dict)
+model = MinGemma(config)
 
 # Dummy input
 dummy_input = tf.random.uniform((1, 50), minval=0, maxval=config.vocab_size, dtype=tf.int32)
