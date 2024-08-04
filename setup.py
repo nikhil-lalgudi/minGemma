@@ -25,7 +25,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/nikhil-lalgudi/minGemma",
     packages=setuptools.find_packages(exclude=['tests']),
-    install_requires=[
+    install_requires=[ 
         "torch>=1.6.0",
         "numpy>=1.18.5",
         "transformers>=4.0.0",
