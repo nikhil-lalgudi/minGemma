@@ -1,18 +1,11 @@
-# Importing pytorch
+# Pytorch, Config, Model, and Dataset Imports
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
-# Imports used for the config
 import dataclasses
 from typing import Optional
-
-# Imports used for the model
 import re
 from typing import Any, List, Sequence, Tuple, Union
-
-
-# used in the training loop
 import time
 
 # load the dataset
@@ -296,45 +289,3 @@ else:
 # Print the number of parameters in the model
 print(sum(p.numel() for p in model.parameters())/1e3, 'K parameters')
 # print(model)
-
-# Training
-
-learning_rate = 3e-4
-weight_decay = 0.01
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-max_iters = 10000
-eval_interval = 250
-batch_size = 32
-
-start_time = time.time()
-for iter in range(max_iters):
-    xb, yb = get_batch('train', batch_size)
-    logits, loss = model(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        current_time = time.time()
-        elapsed_time = current_time - start_time
-        losses = estimate_loss(model, batch_size)
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, time elapsed: {elapsed_time:.2f} seconds")
-
-# Saving your model
-torch.save(model.state_dict(), f'models/{model.__class__.__name__}'
-           f'-vocab_size{config.vocab_size}'
-           f'-max_position_embeddings{config.max_position_embeddings}'
-           f'-num_hidden_layers{config.num_hidden_layers}'
-           f'-num_attention_heads{config.num_attention_heads}'
-           f'-num_key_value_heads{config.num_key_value_heads}'
-           f'-hidden_size{config.hidden_size}'
-           f'-intermediate_size{config.intermediate_size}'
-           f'-head_dim{config.head_dim}'
-           f'-rms_norm_eps{config.rms_norm_eps}'
-           f'-rope_theta{config.rope_theta}'
-           f'--{time.strftime("%Y-%m-%d|%H-%M-%S")}.pth')
-
-# Inference
-input_str = "JULIET:\nO Romeo, Romeo! wherefore art thou R"
-max_useable_output_len = config.max_position_embeddings - len(input_str)
-output = model.generate(input_str, output_len = max_useable_output_len)
-print(output)
