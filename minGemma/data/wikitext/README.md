@@ -1,3 +1,0 @@
-**Wikitext**
-
-Wikitext is a lightweight markup language used to format and structure content on various wiki platforms, including Wikipedia. It allows users to add formatting elements such as headings, lists, links, and tables to their content. Wikitext is designed to be easy to read and edit, making it a popular choice for collaborative editing on wikis. It is often used alongside other markup languages like HTML to create rich and interactive wiki pages.
