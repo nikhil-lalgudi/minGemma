@@ -1,260 +1,237 @@
 import os
 import time
 import math
+import pickle
+from contextlib import nullcontext
+import importlib.util
 
 import numpy as np
 import torch
-from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer, AutoModelForCausalLM, get_linear_schedule_with_warmup
+import deepspeed
 
-# default config values for training
+from configurator import get_config
 
+# Get configurations from configurator.py
+config = get_config()
 
-#data
-dataset = 'coqa'
+# Create an Args class to hold configurations as attributes
+class Args:
+    pass
 
+args = Args()
+for key, value in config.items():
+    setattr(args, key, value)
 
-# system
-device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or 'mps' for the macbook
+# -----------------------------------------------------------------------------
 
-# DDP
-backend = 'nccl'
+# Initialize distributed training
+def setup_distributed():
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        args.local_rank = int(os.environ['LOCAL_RANK'])
+        args.rank = int(os.environ['RANK'])
+        args.world_size = int(os.environ['WORLD_SIZE'])
+        torch.cuda.set_device(args.local_rank)
+        deepspeed.init_distributed()
+        args.distributed = True
+        args.device = torch.device('cuda', args.local_rank)
+    else:
+        args.local_rank = 0
+        args.rank = 0
+        args.world_size = 1
+        args.distributed = False
+        args.device = torch.device(getattr(args, 'device', 'cuda'))
+    return args.device, args.distributed, args.rank, args.world_size
 
-# import os
-# import time
-# import math
-# import torch
-# import numpy as np
-# from torch.nn.parallel import DistributedDataParallel as DDP
-# from torch.distributed import init_process_group, destroy_process_group
-# from contextlib import nullcontext
-# import wandb
-# from model import GPTConfig, GPT
-# from config_loader import get_config
-# def setup_training_environment(config):
-#     # Set up distributed training if applicable
-#     if int(os.environ.get('RANK', -1)) != -1:
-#         init_process_group(backend=config['backend'])
-#         ddp_rank = int(os.environ['RANK'])
-#         ddp_local_rank = int(os.environ['LOCAL_RANK'])
-#         world_size = int(os.environ['WORLD_SIZE'])
-#         device = f'cuda:{ddp_local_rank}'
-#         torch.cuda.set_device(device)
-#         is_master = ddp_rank == 0
-#     else:
-#         world_size = 1
-#         is_master = True
-#         device = config['device']
-#     # Set up dtype and autocast context
-#     dtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[config['dtype']]
-#     device_type = 'cuda' if 'cuda' in device else 'cpu'
-#     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=dtype)
-#     return device, is_master, world_size, ctx
-# def init_model(config, device):
-#     model_args = {k: config[k] for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size', 'dropout']}
-    
-#     if config['init_from'] == 'scratch':
-#         model = GPT(GPTConfig(**model_args))
-#     elif config['init_from'] == 'resume':
-#         ckpt_path = os.path.join(config['out_dir'], 'ckpt.pt')
-#         checkpoint = torch.load(ckpt_path, map_location=device)
-#         model = GPT(GPTConfig(**checkpoint['model_args']))
-#         model.load_state_dict(checkpoint['model'])
-#     elif config['init_from'].startswith('gpt2'):
-#         model = GPT.from_pretrained(config['init_from'], dict(dropout=config['dropout']))
-#         for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
-#             model_args[k] = getattr(model.config, k)
-#     if config['block_size'] < model.config.block_size:
-#         model.crop_block_size(config['block_size'])
-#     model.to(device)
-    
-#     if config['compile']:
-#         model = torch.compile(model)
-#     return model, model_args
-# def get_batch(split, config, data_dir):
-#     data = np.memmap(os.path.join(data_dir, f'{split}.bin'), dtype=np.uint16, mode='r')
-#     ix = torch.randint(len(data) - config['block_size'], (config['batch_size'],))
-#     x = torch.stack([torch.from_numpy((data[i:i+config['block_size']]).astype(np.int64)) for i in ix])
-#     y = torch.stack([torch.from_numpy((data[i+1:i+1+config['block_size']]).astype(np.int64)) for i in ix])
-#     return x.to(config['device']), y.to(config['device'])
-# def estimate_loss(model, config, ctx, data_dir):
-#     out = {}
-#     model.eval()
-#     for split in ['train', 'val']:
-#         losses = torch.zeros(config['eval_iters'])
-#         for k in range(config['eval_iters']):
-#             X, Y = get_batch(split, config, data_dir)
-#             with ctx:
-#                 logits, loss = model(X, Y)
-#             losses[k] = loss.item()
-#         out[split] = losses.mean()
-#     model.train()
-#     return out
-# def get_lr(iter_num, config):
-#     if iter_num < config['warmup_iters']:
-#         return config['learning_rate'] * iter_num / config['warmup_iters']
-#     if iter_num > config['lr_decay_iters']:
-#         return config['min_lr']
-#     decay_ratio = (iter_num - config['warmup_iters']) / (config['lr_decay_iters'] - config['warmup_iters'])
-#     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-#     return config['min_lr'] + coeff * (config['learning_rate'] - config['min_lr'])
-# def train():
-#     # Load configuration
-#     config = get_config()
-    
-#     # Setup training environment
-#     device, is_master, world_size, ctx = setup_training_environment(config)
-    
-#     # Initialize model
-#     model, model_args = init_model(config, device)
-    
-#     # Setup optimizer
-#     optimizer = model.configure_optimizers(config['weight_decay'], config['learning_rate'], 
-#                                            (config['beta1'], config['beta2']), device)
-    
-#     # Setup gradient scaler
-#     scaler = torch.cuda.amp.GradScaler(enabled=(config['dtype'] == 'float16'))
-    
-#     # Wrap model in DDP if using distributed training
-#     if world_size > 1:
-#         model = DDP(model, device_ids=[int(device.split(':')[1])])
-    
-#     # Setup data directory
-#     data_dir = os.path.join('data', config['dataset'])
-    
-#     # Initialize wandb if enabled
-#     if config['wandb_log'] and is_master:
-#         wandb.init(project=config['wandb_project'], name=config['wandb_run_name'], config=config)
-    
-#     # Main training loop
-#     iter_num = 0
-#     best_val_loss = float('inf')
-#     t0 = time.time()
-#     running_mfu = -1.0
-    
-#     while True:
-#         # Learning rate decay
-#         lr = get_lr(iter_num, config) if config['decay_lr'] else config['learning_rate']
-#         for param_group in optimizer.param_groups:
-#             param_group['lr'] = lr
-        
-#         # Evaluate model
-#         if iter_num % config['eval_interval'] == 0 and is_master:
-#             losses = estimate_loss(model, config, ctx, data_dir)
-#             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-#             if config['wandb_log']:
-#                 wandb.log({"iter": iter_num, "train/loss": losses['train'], "val/loss": losses['val'], "lr": lr})
-            
-#             if losses['val'] < best_val_loss or config['always_save_checkpoint']:
-#                 best_val_loss = losses['val']
-#                 if iter_num > 0:
-#                     checkpoint = {
-#                         'model': model.state_dict(),
-#                         'optimizer': optimizer.state_dict(),
-#                         'model_args': model_args,
-#                         'iter_num': iter_num,
-#                         'best_val_loss': best_val_loss,
-#                         'config': config,
-#                     }
-#                     print(f"saving checkpoint to {config['out_dir']}")
-#                     torch.save(checkpoint, os.path.join(config['out_dir'], 'ckpt.pt'))
-        
-#         if iter_num == 0 and config['eval_only']:
-#             break
-        
-#         # Forward and backward pass
-#         for micro_step in range(config['gradient_accumulation_steps']):
-#             X, Y = get_batch('train', config, data_dir)
-#             with ctx:
-#                 logits, loss = model(X, Y)
-#                 loss = loss / config['gradient_accumulation_steps']
-#             scaler.scale(loss).backward()
-        
-#         # Gradient clipping
-#         if config['grad_clip'] != 0.0:
-#             scaler.unscale_(optimizer)
-#             torch.nn.utils.clip_grad_norm_(model.parameters(), config['grad_clip'])
-        
-#         # Step optimizer
-#         scaler.step(optimizer)
-#         scaler.update()
-#         optimizer.zero_grad(set_to_none=True)
-        
-#         # Timing and MFU calculation
-#         if iter_num % config['log_interval'] == 0:
-#             t1 = time.time()
-#             dt = t1 - t0
-#             t0 = t1
-            
-#             # This is the CPU-GPU sync point
-#             lossf = loss.item() * config['gradient_accumulation_steps']
-            
-#             if iter_num > 0:  # Skip the first iteration
-#                 flops_per_iter = model.estimate_mfu(config['batch_size'] * config['gradient_accumulation_steps'], dt)
-#                 mfu = flops_per_iter / (config['log_interval'] * config['gradient_accumulation_steps'])
-#                 running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
-            
-#             if is_master:
-#                 print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
-            
-#             if config['wandb_log']:
-#                 wandb.log({
-#                     "iter": iter_num,
-#                     "loss": lossf,
-#                     "lr": lr,
-#                     "mfu": running_mfu,
-#                 })
-        
-#         iter_num += 1
-        
-#         # Check for termination
-#         if iter_num > config['max_iters']:
-#             break
-    
-#     # Cleanup
-#     if world_size > 1:
-#         destroy_process_group()
-# if __name__ == '__main__':
-#     train()
+device, distributed, rank, world_size = setup_distributed()
 
+seed = getattr(args, 'seed', 1337)
+torch.manual_seed(seed + rank)
+np.random.seed(seed + rank)
 
-# Training
+dtype = getattr(args, 'dtype', 'bfloat16')
+if dtype == 'float32':
+    ptdtype = torch.float32
+elif dtype == 'bfloat16':
+    ptdtype = torch.bfloat16
+elif dtype == 'float16':
+    ptdtype = torch.float16
+else:
+    raise ValueError(f"Unsupported dtype: {dtype}")
 
-learning_rate = 3e-4
-weight_decay = 0.01
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-max_iters = 10000
-eval_interval = 250
-batch_size = 32
+# Custom Dataset class
+class TextDataset(Dataset):
+    def __init__(self, data_path, block_size):
+        self.data = np.memmap(data_path, dtype=np.uint16, mode='r')
+        self.block_size = block_size
 
-start_time = time.time()
-for iter in range(max_iters):
-    xb, yb = get_batch('train', batch_size)
-    logits, loss = model(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        current_time = time.time()
-        elapsed_time = current_time - start_time
-        losses = estimate_loss(model, batch_size)
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, time elapsed: {elapsed_time:.2f} seconds")
+    def __len__(self):
+        return len(self.data) - self.block_size
 
-# Saving your model
-torch.save(model.state_dict(), f'models/{model.__class__.__name__}'
-           f'-vocab_size{config.vocab_size}'
-           f'-max_position_embeddings{config.max_position_embeddings}'
-           f'-num_hidden_layers{config.num_hidden_layers}'
-           f'-num_attention_heads{config.num_attention_heads}'
-           f'-num_key_value_heads{config.num_key_value_heads}'
-           f'-hidden_size{config.hidden_size}'
-           f'-intermediate_size{config.intermediate_size}'
-           f'-head_dim{config.head_dim}'
-           f'-rms_norm_eps{config.rms_norm_eps}'
-           f'-rope_theta{config.rope_theta}'
-           f'--{time.strftime("%Y-%m-%d|%H-%M-%S")}.pth')
+    def __getitem__(self, idx):
+        x = torch.from_numpy((self.data[idx:idx + self.block_size]).astype(np.int64))
+        y = torch.from_numpy((self.data[idx + 1:idx + 1 + self.block_size]).astype(np.int64))
+        return x, y
 
-# Inference
-input_str = "JULIET:\nO Romeo, Romeo! wherefore art thou R"
-max_useable_output_len = config.max_position_embeddings - len(input_str)
-output = model.generate(input_str, output_len = max_useable_output_len)
-print(output)
+def get_dataloader(split):
+    data_dir = os.path.join('data', args.dataset)
+    data_path = os.path.join(data_dir, f'{split}.bin')
+    dataset = TextDataset(data_path, args.block_size)
+    sampler = torch.utils.data.distributed.DistributedSampler(dataset) if args.distributed else None
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        sampler=sampler,
+        shuffle=(sampler is None),
+        pin_memory=True
+    )
+    return dataloader
+
+train_loader = get_dataloader('train')
+val_loader = get_dataloader('val')
+# Load tokenizer (Come back to this later)  
+tokenizer = AutoTokenizer.from_pretrained(args.Gemma)
+model = AutoModelForCausalLM.from_pretrained(args.Gemma, torch_dtype=ptdtype)
+
+# Adjust model configurations if needed
+model.config.n_layer = args.n_layer
+model.config.n_head = args.n_head
+model.config.n_embd = args.n_embd
+model.config.use_cache = False  # Disable cache for training
+model.to(device)
+
+# Use torch.compile if enabled
+if getattr(args, 'compile', False):
+    model = torch.compile(model)
+
+# Prepare optimizer
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=args.learning_rate,
+    betas=(args.beta1, args.beta2),
+    weight_decay=args.weight_decay
+)
+
+# Load DeepSpeed configuration if specified
+if hasattr(args, 'deepspeed_config'):
+    with open(args.deepspeed_config, 'r') as f:
+        ds_config = json.load(f)
+else:
+    ds_config = None
+
+# DeepSpeed initialization
+model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+model, optimizer, _, scheduler = deepspeed.initialize(
+    args=args,
+    model=model,
+    model_parameters=model_parameters,
+    optimizer=optimizer,
+    lr_scheduler=None,
+    config_params=ds_config
+)
+
+# Learning rate scheduler
+scheduler = get_linear_schedule_with_warmup(
+    optimizer,
+    num_warmup_steps=args.warmup_iters,
+    num_training_steps=args.lr_decay_iters
+)
+
+# Training Loop with DoLa Integration
+def train():
+    model.train()
+    total_loss = 0.0
+    step = 0
+    while True:
+        for x, y in train_loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            # Forward pass
+            outputs = model(x, labels=y)
+            loss = outputs.loss
+
+            # If DoLa is enabled, compute DoLa loss and combine
+            if getattr(args, 'use_dola', False):
+                dola_loss = compute_dola_loss(
+                    model,
+                    x,
+                    y,
+                    args.mature_layer,
+                    args.premature_layer,
+                    args.relative_top
+                )
+                loss += dola_loss  # You might want to weight the dola_loss
+
+            # Backward pass and optimization
+            model.backward(loss)
+            model.step()
+            if getattr(args, 'decay_lr', False):
+                scheduler.step()
+            if step % args.log_interval == 0 and rank == 0:
+                print(f"Step {step}, Loss: {loss.item()}")
+
+            if step % args.eval_interval == 0 and step > 0:
+                evaluate()
+
+            if step >= args.max_iters:
+                return
+
+            step += 1
+
+def evaluate():
+    model.eval()
+    eval_loss = 0.0
+    with torch.no_grad():
+        for x, y in val_loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            outputs = model(x, labels=y)
+            loss = outputs.loss
+
+            eval_loss += loss.item()
+
+    avg_loss = eval_loss / len(val_loader)
+    if rank == 0:
+        print(f"Validation Loss: {avg_loss}")
+    model.train()
+
+def compute_dola_loss(model, x, y, mature_layer, premature_layer, relative_top):
+    # Implement DoLa loss computation
+    outputs = model(
+        input_ids=x,
+        output_hidden_states=True,
+        return_dict=True
+    )
+
+    hidden_states = outputs.hidden_states  # List of hidden states from each layer
+
+    # Get logits from mature and premature layers then computing differences
+    mature_logits = model.lm_head(hidden_states[mature_layer])
+    premature_logits = model.lm_head(hidden_states[premature_layer])
+    diff_logits = mature_logits - premature_logits
+
+    # Apply relative top filtering
+    if relative_top > 0.0:
+        diff_logits = apply_relative_top_filter(diff_logits, relative_top)
+    # NLL Loss
+    diff_logits = F.log_softmax(diff_logits, dim=-1)
+    loss = F.nll_loss(diff_logits.view(-1, diff_logits.size(-1)), y.view(-1))
+
+    return loss
+
+def apply_relative_top_filter(logits, relative_top):
+    # Implement relative top filtering
+    logits_normalized = F.log_softmax(logits, dim=-1)
+    sorted_logits, _ = torch.sort(logits_normalized, descending=True, dim=-1)
+    threshold_index = int(relative_top * logits.size(-1))
+    threshold = sorted_logits[:, :, threshold_index].unsqueeze(-1)
+    mask = logits_normalized < threshold
+    logits = logits.masked_fill(mask, float('-inf'))
+    return logits
+
+if __name__ == '__main__':
+    train()
