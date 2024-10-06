@@ -7,7 +7,7 @@ import multiprocessing
 
 # config
 NUM_PROC = max(1, multiprocessing.cpu_count() // 2)
-ENCODING = "gpt2"
+ENCODING = "gemma"
 VAL_SIZE = 0.0005
 SEED = 2357
 BATCH_SIZE = 1000
