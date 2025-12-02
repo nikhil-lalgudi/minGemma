@@ -1,7 +1,3 @@
-"""
-Created a better "Poor Man's Configurator" that can load configurations from a Python file 
-and merge them with command-line arguments.
-"""
 import argparse
 import importlib.util
 from typing import Any, Dict
